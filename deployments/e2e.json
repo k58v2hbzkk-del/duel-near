@@ -1,5 +1,101 @@
 [
   {
+    "ran_at": "2026-11-06T09:56:24.312Z",
+    "contract": "duel-b91d5de8.testnet",
+    "steps": [
+      {
+        "step": "A1 taj creates a BTC price duel (0.2 NEAR)",
+        "tx": "https://testnet.nearblocks.io/txns/6v6w6cHp9VsxWbLqrTju34Mv5vrbzXPy11BeETkaUArF"
+      },
+      {
+        "step": "A2 truth locks the same stake",
+        "tx": "https://testnet.nearblocks.io/txns/HydTVffhduqGX3c4K5i5GeoQgpuPxMcTP3KQCUBEyM7a"
+      },
+      {
+        "step": "B1 taj challenges truth to EA SPORTS FC (invite-only)",
+        "tx": "https://testnet.nearblocks.io/txns/EQRkrB43A9kWcdNQFNuAr6tYUv4jiRJKbFZ2wHcgX6cW"
+      },
+      {
+        "step": "B2 truth accepts",
+        "tx": "https://testnet.nearblocks.io/txns/6HL9TrpS7HuMZ8m7cwrjHrzNqPpkpf83yTqmGn9y1PJ3"
+      },
+      {
+        "step": "B3 truth concedes, contract pays taj instantly",
+        "tx": "https://testnet.nearblocks.io/txns/BECpDnHcRmKgA7YQF1D4ykdSwodyTXswweX8FpbDCF9L"
+      },
+      {
+        "step": "C1 taj starts a rematch with witnesses",
+        "tx": "https://testnet.nearblocks.io/txns/HS1yCL1aMNKBiHcxgykZG23LBnrtx1B7YKJAmSZz5bQG"
+      },
+      {
+        "step": "C2 truth accepts",
+        "tx": "https://testnet.nearblocks.io/txns/78NyXWd5bx1JaRa6YgJYLhFcFxqzDG5S45LrPB3TBRkM"
+      },
+      {
+        "step": "C3.1 taj adds witness Ada",
+        "tx": "https://testnet.nearblocks.io/txns/6c2sBxWWvQN2GuPVc3UZGF65GdGbpNkyfiGSaKYDKSu1"
+      },
+      {
+        "step": "C3.2 taj adds witness Bayo",
+        "tx": "https://testnet.nearblocks.io/txns/5YLVWESwDeB4zFsLHhFoh4bBTSa3i6yDG7LqrbvkFjnJ"
+      },
+      {
+        "step": "C3.3 truth adds witness Chi",
+        "tx": "https://testnet.nearblocks.io/txns/8198hbffvb5W8cdhPhWcWJPHbv3AeMFGzaGHdSDbNkjd"
+      },
+      {
+        "step": "C4.1 the other player approves Ada (vote-only key added)",
+        "tx": "https://testnet.nearblocks.io/txns/6UPrhjUpPJKJ1cSfXmtNkKE7xCHUsn6eZUeeMqbkDE4r"
+      },
+      {
+        "step": "C4.2 the other player approves Bayo (vote-only key added)",
+        "tx": "https://testnet.nearblocks.io/txns/E14LNBGcqL1fq5zoruorkBCLy7RHB1AdbNJNGSgHFpRC"
+      },
+      {
+        "step": "C4.3 the other player approves Chi (vote-only key added)",
+        "tx": "https://testnet.nearblocks.io/txns/EMFjNDuXN8FYjW3FcD8odzuATpBraNAAsfXC32VK5dMM"
+      },
+      {
+        "step": "C5 taj says he won",
+        "tx": "https://testnet.nearblocks.io/txns/BsppZ2dotJGmnkWycBTQKXQ2iMxwvxiyBUe9tgaY4Hud"
+      },
+      {
+        "step": "C6 truth says he won: dispute, witnesses can vote",
+        "tx": "https://testnet.nearblocks.io/txns/AAEqogxEjvFrvaFUPG6Fk15Se4raYqxduv6Ja8g96qys"
+      },
+      {
+        "step": "C7.1 witness Ada votes from a link (no wallet, no gas)",
+        "tx": "https://testnet.nearblocks.io/txns/DgZntPDzhbrrCzjbpdT7GCKHvt9mrKYRnc4k6U4zfJxm"
+      },
+      {
+        "step": "C7.2 witness Chi votes from a link (no wallet, no gas)",
+        "tx": "https://testnet.nearblocks.io/txns/gEDi9Q2V1vwLSNJGSZLoE3b53jELYYAHnFNZuhjz3wV"
+      },
+      {
+        "step": "A3 DUEL referee reads Coinbase and pays the winner",
+        "tx": "https://testnet.nearblocks.io/txns/9hRLw4LmnMegmaypBAm5jdqR9KJAP75d1t38ZKWu2uDj",
+        "verdict": {
+          "v": 1,
+          "duel": 3,
+          "referee": "duel-ai-referee",
+          "method": "price-oracle",
+          "result": "creator",
+          "winner": "taj.duel-b91d5de8.testnet",
+          "reason": "BTC was $75,951.22 at 2026-11-06T09:53:00.000Z (target $37,992, creator needed above)",
+          "data": {
+            "source": "coinbase:BTC-USD:1m-close",
+            "price": 75951.22,
+            "at": 1793958780000,
+            "target": 37992,
+            "dir": "above"
+          },
+          "inputs_sha256": "0a0bfa38a2c738f4f8cef03c6c53c4641b32f31bb9c21e4f1287cc6642bd7c89",
+          "decided_at": "2026-11-06T09:56:09.878Z"
+        }
+      }
+    ]
+  },
+  {
     "ran_at": "2026-11-06T08:15:34.818Z",
     "contract": "duel-b91d5de8.testnet",
     "steps": [
