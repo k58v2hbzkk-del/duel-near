@@ -1,8 +1,9 @@
 // Build the static web app into dist/ (GitHub Pages ready).
 import { build } from "esbuild";
-import { mkdirSync, copyFileSync } from "node:fs";
+import { mkdirSync, copyFileSync, readFileSync, existsSync } from "node:fs";
 
-const contract = process.env.DUEL_CONTRACT || "";
+const deployed = existsSync("../deployments/testnet.json") ? JSON.parse(readFileSync("../deployments/testnet.json", "utf8")).contract : "";
+const contract = process.env.DUEL_CONTRACT || deployed;
 const network = process.env.DUEL_NETWORK || "testnet";
 mkdirSync("dist", { recursive: true });
 await build({
