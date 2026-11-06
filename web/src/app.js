@@ -1,5 +1,6 @@
 import { initWallet, accountId, onAccountChange, connect, disconnect, view, call, toYocto, fromYocto, CONTRACT, NETWORK, EXPLORER } from "./near.js";
 import { OneClick, topUpQuote, cashOutQuote, fromUnits } from "../../referee/src/intents.js";
+import { myWitnessKey, newWitnessKey, myWitnessName, witnessCode, castVote } from "./witness.js";
 import "./styles.css";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -130,6 +131,12 @@ async function home() {
     if (me) {
       const mine = await view("get_player_duels", { account: me });
       $("#mine").innerHTML = `<h2>Your duels.</h2>${mine.length ? `<div class="list">${mine.map((d) => ticket(d, { mini: true })).join("")}</div>` : `<p class="muted">No duels yet. Start one and send the link to a friend.</p>`}`;
+      const rivals = [...new Set(mine.filter((d) => d.opponent).map((d) => (d.creator === me ? d.opponent : d.creator)))];
+      const records = (await Promise.all(rivals.map((r) => rivalryRecord(me, r)))).filter((r) => r.n);
+      if (records.length) {
+        $("#mine").insertAdjacentHTML("afterbegin", `<h2>Your rivalries.</h2><div class="list">${records.map(rivalryCard).join("")}</div>`);
+        wireShare($("#mine"), records);
+      }
     }
   } catch (e) {
     $("#latest").innerHTML = `<p class="muted small">Couldn't load live duels right now.</p>`;
@@ -329,9 +336,10 @@ const METHOD = {
   invalid: "The bet terms could not be checked",
   concession: "One player admitted the loss",
   "both players agreed": "Both players reported the same result",
+  "group-chat majority": "Settled by the group chat witnesses",
 };
 
-async function duelView(id, isNew) {
+async function duelView(id, isNew, params = new URLSearchParams()) {
   let d;
   try {
     d = await view("get_duel", { duel_id: Number(id) });
@@ -383,7 +391,7 @@ async function duelView(id, isNew) {
         <button class="btn ghost block" style="margin-top:10px" data-r="">Draw, refund both</button></div>`);
     }
     if (now > d.resolve_at_ms + grace) parts.push(`<button class="btn ghost block" id="refund">Refund both players</button>`);
-    if (!parts.length) parts.push(`<p class="panel">Settles after ${when(d.resolve_at_ms)}${d.judge ? `, judged by ${esc(d.judge)}` : " by the DUEL referee"}.</p>`);
+    if (!parts.length) parts.push(`<p class="panel">Settles after ${when(d.resolve_at_ms)}${d.judge ? `, judged by ${esc(d.judge)}` : d.witnesses.some((w) => w.approved) ? ". If the players disagree, the witnesses vote" : " by the DUEL referee"}.</p>`);
     actions = parts.join("");
   } else {
     actions = verdictPanel(d) + (d.status === "Settled" && me === d.winner ? cashOutPanel(d, potAfterFee) : "");
@@ -399,20 +407,25 @@ async function duelView(id, isNew) {
     <span class="status ${d.status}">${STATUS_TEXT[d.status]}</span>
     <ul class="facts">
       <li><span>Settles</span><span>${when(d.resolve_at_ms)}</span></li>
-      <li><span>Referee</span><span>${d.judge ? `${esc(d.judge)} (friend)` : "DUEL AI referee"}</span></li>
+      <li><span>Referee</span><span>${d.judge ? `${esc(d.judge)} (friend)` : d.witnesses.some((w) => w.approved) ? "Group chat witnesses, then the DUEL referee" : "DUEL AI referee"}</span></li>
       <li><span>Winner gets</span><span>${money(potAfterFee.toString(), d.token)}</span></li>
       <li><span>Duel</span><span><a href="${EXPLORER}/address/${esc(CONTRACT)}" target="_blank" rel="noopener">#${d.id} on ${esc(CONTRACT)}</a></span></li>
     </ul>
     ${claims}
-    ${actions}`;
+    ${actions}
+    ${witnessPanel(d, me, params)}
+    <section id="rivalry"></section>`;
   wireDuel(d, me);
+  wireWitnesses(d, me, params);
+  if (d.opponent) renderRivalry(d.creator, d.opponent, $("#rivalry"));
 
   clearInterval(pollTimer);
   if (d.status === "Open" || d.status === "Locked") {
     pollTimer = setInterval(async () => {
       if (!location.hash.startsWith(`#/d/${d.id}`) || document.activeElement?.tagName === "INPUT") return;
       const fresh = await view("get_duel", { duel_id: d.id }).catch(() => null);
-      if (fresh && (fresh.status !== d.status || fresh.claims.length !== d.claims.length)) duelView(d.id);
+      const sig = (x) => `${x.status}|${x.claims.length}|${x.witnesses.map((w) => `${w.approved}${w.voted}`).join("")}`;
+      if (fresh && sig(fresh) !== sig(d)) duelView(d.id);
     }, 8000);
   }
 }
@@ -428,6 +441,7 @@ function verdictPanel(d) {
   return `<div class="panel"><h3>${d.winner ? `${esc(short(d.winner))} won` : "Draw"}</h3>
     <p>${esc(v.reason || "")}</p>
     <p class="small muted">${esc(how)}${v.decided_at ? `, ${when(Date.parse(v.decided_at))}` : ""}.</p>
+    ${v.votes ? `<ul class="facts">${v.votes.map((x) => `<li><span>${esc(x.name)}</span><span>${x.voted ? (x.winner ? `${esc(short(x.winner))} won` : "draw") : "didn't vote"}</span></li>`).join("")}</ul>` : ""}
     ${ai ? `<ul class="facts"><li><span>AI model</span><span>${esc(ai.model)}</span></li>
       <li><span>Ran inside a TEE</span><span class="${ai.signer_in_attestation ? "ok" : "bad"}">${ai.signer_in_attestation ? "Yes, signer matches the attestation" : "Not proven"}</span></li>
       <li><span>Verdict signature</span><span class="${ai.sig_valid && ai.sig_covers_hashes ? "ok" : "bad"}">${ai.sig_valid && ai.sig_covers_hashes ? "Valid" : "Not verified"}</span></li></ul>` : ""}
@@ -536,6 +550,231 @@ function wireDuel(d, me) {
   });
 }
 
+// -------------------------------------------------------------- witnesses
+const W_FEE = 50_000_000_000_000_000_000_000n;
+const witnessLink = (id) => `${location.origin}${location.pathname}${location.search}#/w/${id}`;
+const votingOpen = (d) => Date.now() >= d.resolve_at_ms || (d.claims.length === 2 && d.claims[0].winner !== d.claims[1].winner);
+
+function witnessPanel(d, me, params) {
+  if (d.judge) return "";
+  const live = d.status === "Open" || d.status === "Locked";
+  if (!live && !d.witnesses.length) return "";
+  const isPlayer = me && (me === d.creator || me === d.opponent);
+  const incoming = params.get("w");
+  let add = "";
+  if (incoming && isPlayer && live) {
+    const [name, b58] = incoming.split("~");
+    const pk = `ed25519:${b58}`;
+    if (!d.witnesses.some((w) => w.key === pk)) {
+      add = `<div class="panel"><h3>Add ${esc(name)} as a witness?</h3>
+        <p class="small muted">Witness code <b>${esc(witnessCode(pk))}</b>. The other player will check it matches what ${esc(name)} posted in the group chat. Costs 0.05 NEAR, which pays for their vote so they never need a wallet.</p>
+        <button class="btn block" id="addW" data-name="${esc(name)}" data-pk="${esc(pk)}">Add ${esc(name)}</button></div>`;
+    }
+  }
+  const rows = d.witnesses.map((w, i) => {
+    const mine = me && w.added_by === me;
+    let state = w.voted ? (w.vote ? `voted ${esc(short(w.vote))}` : "voted draw") : w.approved ? "approved" : !isPlayer ? "waiting for approval" : `waiting for ${mine ? "the other player's" : "your"} approval`;
+    let btns = "";
+    if (live && isPlayer && !w.approved) {
+      btns = mine
+        ? `<button class="btn ghost small" data-rej="${i}">Remove</button>`
+        : `<button class="btn small" data-app="${i}">Code matches, approve</button><button class="btn ghost small" data-rej="${i}">Remove</button>`;
+    }
+    return `<li><span><b>${esc(w.name)}</b> <span class="muted">code ${esc(witnessCode(w.key))}</span><br><span class="small muted">${state}</span></span><span class="row" style="justify-content:flex-end">${btns}</span></li>`;
+  }).join("");
+  const invite = live && isPlayer && d.witnesses.length < 5
+    ? `<div class="row" style="margin-top:12px"><button class="btn ghost" id="inviteW">Invite a witness</button></div>`
+    : "";
+  return `${add}<div class="panel"><h3>Group chat witnesses</h3>
+    <p class="small muted">${d.witnesses.length ? "If you two disagree, the majority of witnesses decides. They vote from a link, with no wallet and no gas." : "Add friends from the group chat. If you disagree on who won, the majority of them decides. They vote from a link, with no wallet and no gas."}</p>
+    ${rows ? `<ul class="facts">${rows}</ul>` : ""}${invite}</div>`;
+}
+
+function wireWitnesses(d, me, params) {
+  const run = async (btn, label, fn) => {
+    btn.disabled = true;
+    const old = btn.innerHTML;
+    btn.innerHTML = `<span class="spinner"></span> ${label}`;
+    try {
+      await fn();
+      setTimeout(() => (location.hash = `#/d/${d.id}`), 1200);
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = old;
+    }
+  };
+  const add = $("#addW");
+  if (add) add.onclick = (e) => run(e.currentTarget, "Waiting for your wallet", () =>
+    call("add_witness", { duel_id: d.id, name: add.dataset.name, public_key: add.dataset.pk }, { depositYocto: W_FEE, callbackHash: `#/d/${d.id}` }));
+  document.querySelectorAll("[data-app]").forEach((b) => (b.onclick = (e) => run(e.currentTarget, "Approving", () =>
+    call("approve_witness", { duel_id: d.id, index: Number(b.dataset.app) }, { callbackHash: `#/d/${d.id}` }))));
+  document.querySelectorAll("[data-rej]").forEach((b) => (b.onclick = (e) => run(e.currentTarget, "Removing", () =>
+    call("reject_witness", { duel_id: d.id, index: Number(b.dataset.rej) }, { callbackHash: `#/d/${d.id}` }))));
+  const inv = $("#inviteW");
+  if (inv) inv.onclick = async () => {
+    const text = `Be a witness for our duel: ${d.title}\nTap the link, then post your witness code back here 👇`;
+    if (navigator.share) return navigator.share({ title: "DUEL witness", text, url: witnessLink(d.id) }).catch(() => {});
+    await navigator.clipboard.writeText(`${text}\n${witnessLink(d.id)}`);
+    toast("Invite copied. Paste it in the group chat");
+  };
+}
+
+async function witnessView(id) {
+  let d;
+  try {
+    d = await view("get_duel", { duel_id: Number(id) });
+  } catch (e) {
+    app.innerHTML = `<p class="bad">Could not load duel #${esc(id)}: ${esc(e.message)}</p>`;
+    return;
+  }
+  if (!d) return (app.innerHTML = `<h2>Duel #${esc(id)} doesn't exist</h2>`);
+  const kp = myWitnessKey(id);
+  const pk = kp ? kp.getPublicKey().toString() : null;
+  const me = pk ? d.witnesses.find((w) => w.key === pk) : null;
+  let body;
+  if (!kp) {
+    body = `<div class="panel"><h3>Be the witness.</h3>
+      <p>${esc(short(d.creator))} and ${esc(short(d.opponent) || "a friend")} want you to settle it if they disagree. You don't need a wallet, an app or any money.</p>
+      <label for="wname">Your name</label><input id="wname" maxlength="32" placeholder="Ada" />
+      <button class="btn block" style="margin-top:14px" id="becomeW">Get my witness code</button></div>`;
+  } else if (!me) {
+    const b58 = pk.replace(/^ed25519:/, "");
+    const back = `${location.origin}${location.pathname}${location.search}#/d/${id}?w=${encodeURIComponent(myWitnessName(id) || "Witness")}~${b58}`;
+    body = `<div class="panel"><h3>Your witness code</h3>
+      <p style="font-size:34px;letter-spacing:-.02em;margin:4px 0 10px">${esc(witnessCode(pk))}</p>
+      <p class="small muted">Post this in the group chat. One of the players adds you, and the other checks the code matches before approving.</p>
+      <button class="btn block" id="sendCode">Send to the group chat</button></div>`;
+    setTimeout(() => {
+      $("#sendCode").onclick = async () => {
+        const text = `I'm a witness for "${d.title}" on DUEL. My witness code: ${witnessCode(pk)}. Tap to add me 👇`;
+        if (navigator.share) return navigator.share({ title: "DUEL witness", text, url: back }).catch(() => {});
+        await navigator.clipboard.writeText(`${text}\n${back}`);
+        toast("Copied. Paste it in the group chat");
+      };
+    });
+  } else if (!me.approved) {
+    body = `<div class="panel"><h3>Almost there, ${esc(me.name)}.</h3><p>You've been added with code <b>${esc(witnessCode(pk))}</b>. Waiting for the other player to approve you.</p></div>`;
+  } else if (d.status !== "Locked") {
+    body = `<div class="panel"><h3>This duel is finished.</h3><p>${d.winner ? `${esc(short(d.winner))} won.` : "It ended without a winner."}</p><a class="btn ghost block" href="#/d/${id}">See the result</a></div>`;
+  } else if (me.voted) {
+    body = `<div class="panel"><h3>Vote counted.</h3><p>You said ${me.vote ? `${esc(short(me.vote))} won` : "it was a draw"}. Once most witnesses agree, the winner is paid automatically.</p></div>`;
+  } else if (!votingOpen(d)) {
+    body = `<div class="panel"><h3>You're an approved witness.</h3><p>Voting opens ${when(d.resolve_at_ms)}, or earlier if the two players disagree. Come back to this link then.</p></div>`;
+  } else {
+    body = `<div class="panel"><h3>Who won?</h3><p class="small muted">Your vote is signed on NEAR with your witness key. No wallet, no gas.</p>
+      <div class="row"><button class="btn a" data-v="${esc(d.creator)}">${esc(short(d.creator))} won</button><button class="btn b" data-v="${esc(d.opponent)}">${esc(short(d.opponent))} won</button></div>
+      <button class="btn ghost block" style="margin-top:10px" data-v="">Draw</button></div>`;
+  }
+  app.innerHTML = `${ticket(d, { href: false })}${body}`;
+  const become = $("#becomeW");
+  if (become) become.onclick = () => {
+    const name = $("#wname").value.trim();
+    if (!name) return toast("Type your name first");
+    newWitnessKey(id, name);
+    witnessView(id);
+  };
+  document.querySelectorAll("[data-v]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    b.innerHTML = `<span class="spinner"></span> Signing your vote`;
+    try {
+      await castVote(id, kp, b.dataset.v || null);
+      toast("Vote counted");
+      setTimeout(() => witnessView(id), 1500);
+    } catch (e) {
+      toast(e.message);
+      b.disabled = false;
+    }
+  }));
+}
+
+// ---------------------------------------------------------------- rivalry
+async function rivalryRecord(a, b) {
+  const list = await view("get_player_duels", { account: a });
+  const games = list.filter((d) => [d.creator, d.opponent].includes(b) && ["Settled", "Draw"].includes(d.status));
+  return {
+    a, b,
+    aw: games.filter((d) => d.winner === a).length,
+    bw: games.filter((d) => d.winner === b).length,
+    dr: games.filter((d) => d.status === "Draw").length,
+    n: games.length,
+  };
+}
+
+function rivalryCard(r) {
+  return `<div class="rival"><div class="rv-top">🤺 Head to head</div>
+    <div class="rv-score"><span class="rv-a">${esc(short(r.a))}</span><b>${r.aw}</b><i>–</i><b>${r.bw}</b><span class="rv-b">${esc(short(r.b))}</span></div>
+    <div class="rv-sub">${r.n} duel${r.n === 1 ? "" : "s"} settled${r.dr ? `, ${r.dr} draw${r.dr === 1 ? "" : "s"}` : ""}</div>
+    <button class="btn ghost small" data-share="${esc(r.a)}|${esc(r.b)}">Share the rivalry</button></div>`;
+}
+
+async function renderRivalry(a, b, el) {
+  try {
+    const r = await rivalryRecord(a, b);
+    if (!r.n) return;
+    el.innerHTML = `<h2 style="margin-top:40px">The rivalry.</h2>${rivalryCard(r)}`;
+    wireShare(el, [r]);
+  } catch {}
+}
+
+function wireShare(el, records) {
+  el.querySelectorAll("[data-share]").forEach((btn) => (btn.onclick = async () => {
+    const [a, b] = btn.dataset.share.split("|");
+    const r = records.find((x) => x.a === a && x.b === b);
+    const blob = await rivalryImage(r);
+    const file = new File([blob], `duel-${short(a)}-vs-${short(b)}.png`, { type: "image/png" });
+    const text = `${short(a)} ${r.aw} – ${r.bw} ${short(b)} on DUEL 🤺 Bet your friends on anything.`;
+    if (navigator.canShare?.({ files: [file] })) return navigator.share({ files: [file], text }).catch(() => {});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }));
+}
+
+function rivalryImage(r) {
+  const c = document.createElement("canvas");
+  c.width = 1080;
+  c.height = 1080;
+  const g = c.getContext("2d");
+  const bg = g.createLinearGradient(0, 0, 1080, 1080);
+  bg.addColorStop(0, "#0c0d12");
+  bg.addColorStop(1, "#16171f");
+  g.fillStyle = bg;
+  g.fillRect(0, 0, 1080, 1080);
+  const glow = (x, y, col) => {
+    const rg = g.createRadialGradient(x, y, 0, x, y, 520);
+    rg.addColorStop(0, col);
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = rg;
+    g.fillRect(0, 0, 1080, 1080);
+  };
+  glow(260, 420, "rgba(58,91,255,.55)");
+  glow(820, 460, "rgba(255,90,122,.45)");
+  g.fillStyle = "#fff";
+  g.textAlign = "center";
+  g.font = "600 44px system-ui, -apple-system, sans-serif";
+  g.fillText("🤺 DUEL", 540, 120);
+  g.font = "300 54px system-ui, -apple-system, sans-serif";
+  g.fillText("Head to head", 540, 260);
+  g.font = "500 64px system-ui, -apple-system, sans-serif";
+  g.fillText(short(r.a), 290, 470);
+  g.fillText(short(r.b), 790, 470);
+  g.font = "300 260px system-ui, -apple-system, sans-serif";
+  g.fillText(`${r.aw}`, 290, 720);
+  g.fillText(`${r.bw}`, 790, 720);
+  g.font = "200 160px system-ui, -apple-system, sans-serif";
+  g.fillText("–", 540, 690);
+  g.font = "400 38px system-ui, -apple-system, sans-serif";
+  g.fillStyle = "rgba(255,255,255,.7)";
+  g.fillText(`${r.n} duels settled on NEAR${r.dr ? `, ${r.dr} draw${r.dr === 1 ? "" : "s"}` : ""}`, 540, 860);
+  g.fillText("Bet your friends on anything.", 540, 960);
+  return new Promise((res) => c.toBlob(res, "image/png"));
+}
+
 // ---------------------------------------------------------------- routing
 function route() {
   clearInterval(pollTimer);
@@ -543,12 +782,17 @@ function route() {
   $("#foot").classList.remove("hide");
   window.scrollTo(0, 0);
   const h = location.hash || "#/";
-  const m = h.match(/^#\/d\/(\d+)(\?new=1)?/);
+  const m = h.match(/^#\/d\/(\d+)(?:\?(.*))?$/);
+  const wm = h.match(/^#\/w\/(\d+)/);
   if (!CONTRACT && h !== "#/") {
     app.innerHTML = `<p class="bad">No DUEL contract configured. Add ?contract=your-contract.testnet to the URL.</p>`;
     return;
   }
-  if (m) return duelView(m[1], !!m[2]);
+  if (m) {
+    const params = new URLSearchParams(m[2] || "");
+    return duelView(m[1], params.get("new") === "1", params);
+  }
+  if (wm) return witnessView(wm[1]);
   if (h.startsWith("#/new")) return createView();
   if (h.startsWith("#/created")) return createdView();
   return home();
