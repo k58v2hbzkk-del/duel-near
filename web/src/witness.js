@@ -48,7 +48,7 @@ export async function castVote(id, kp, winner) {
     contractId: CONTRACT,
     methodName: "witness_vote",
     args: { duel_id: Number(id), winner },
-    gas: 100_000_000_000_000n,
+    gas: 60_000_000_000_000n,
   });
   const failure = out?.status?.Failure;
   if (failure) {

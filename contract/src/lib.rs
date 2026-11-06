@@ -42,7 +42,7 @@ pub const MAX_EVIDENCE: usize = 500;
 pub const MAX_WITNESSES: usize = 5;
 pub const MAX_NAME: usize = 32;
 /// Paid by whoever adds a witness; funds the witness key's gas allowance.
-pub const WITNESS_FEE: u128 = 50_000_000_000_000_000_000_000; // 0.05 NEAR
+pub const WITNESS_FEE: u128 = 100_000_000_000_000_000_000_000; // 0.1 NEAR
 pub const VERSION: u32 = 2;
 pub const MAX_FEE_BPS: u16 = 1000; // 10%
 pub const DAY_MS: u64 = 24 * 60 * 60 * 1000;
@@ -488,7 +488,7 @@ impl Contract {
 
     // ------------------------------------------------------------- witnesses
 
-    /// Add a friend from the group chat as a witness. Attach exactly 0.05
+    /// Add a friend from the group chat as a witness. Attach exactly 0.1
     /// NEAR (it pays for their votes, so they never need NEAR or a wallet).
     /// The other player must approve the witness before it counts.
     #[payable]
@@ -498,7 +498,7 @@ impl Contract {
         require!(d.is_player(&caller), "not a player");
         require!(matches!(d.status, Status::Open | Status::Locked), "duel finished");
         require!(d.judge.is_none(), "this duel has a friend judge");
-        require!(env::attached_deposit().as_yoctonear() == WITNESS_FEE, "attach exactly 0.05 NEAR");
+        require!(env::attached_deposit().as_yoctonear() == WITNESS_FEE, "attach exactly 0.1 NEAR");
         require!(!name.trim().is_empty() && name.len() <= MAX_NAME, "bad witness name");
         require!(d.witnesses.len() < MAX_WITNESSES, "too many witnesses");
         require!(d.witnesses.iter().all(|w| !w.voted), "voting already started");

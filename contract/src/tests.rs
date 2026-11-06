@@ -543,7 +543,7 @@ fn cannot_approve_your_own_witness() {
 }
 
 #[test]
-#[should_panic(expected = "attach exactly 0.05 NEAR")]
+#[should_panic(expected = "attach exactly 0.1 NEAR")]
 fn adding_a_witness_needs_the_fee() {
     let mut c = setup();
     let id = locked_duel(&mut c);

@@ -551,7 +551,7 @@ function wireDuel(d, me) {
 }
 
 // -------------------------------------------------------------- witnesses
-const W_FEE = 50_000_000_000_000_000_000_000n;
+const W_FEE = 100_000_000_000_000_000_000_000n;
 const witnessLink = (id) => `${location.origin}${location.pathname}${location.search}#/w/${id}`;
 const votingOpen = (d) => Date.now() >= d.resolve_at_ms || (d.claims.length === 2 && d.claims[0].winner !== d.claims[1].winner);
 
@@ -567,7 +567,7 @@ function witnessPanel(d, me, params) {
     const pk = `ed25519:${b58}`;
     if (!d.witnesses.some((w) => w.key === pk)) {
       add = `<div class="panel"><h3>Add ${esc(name)} as a witness?</h3>
-        <p class="small muted">Witness code <b>${esc(witnessCode(pk))}</b>. The other player will check it matches what ${esc(name)} posted in the group chat. Costs 0.05 NEAR, which pays for their vote so they never need a wallet.</p>
+        <p class="small muted">Witness code <b>${esc(witnessCode(pk))}</b>. The other player will check it matches what ${esc(name)} posted in the group chat. Costs 0.1 NEAR, which pays for their vote so they never need a wallet.</p>
         <button class="btn block" id="addW" data-name="${esc(name)}" data-pk="${esc(pk)}">Add ${esc(name)}</button></div>`;
     }
   }
