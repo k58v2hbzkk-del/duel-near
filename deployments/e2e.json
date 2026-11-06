@@ -1,0 +1,50 @@
+[
+  {
+    "ran_at": "2026-11-06T08:15:34.818Z",
+    "contract": "duel-b91d5de8.testnet",
+    "steps": [
+      {
+        "step": "A1 taj creates a BTC price duel (0.2 NEAR)",
+        "tx": "https://testnet.nearblocks.io/txns/GuUQHgW1zt74RGDr8zhsD39S31hYmLxdDWHXmnRVsF6y"
+      },
+      {
+        "step": "A2 truth locks the same stake",
+        "tx": "https://testnet.nearblocks.io/txns/2mSxXeuzj9UP7qAxq5MUpPe1Fp3TAhCPSiJmKRZUUBrm"
+      },
+      {
+        "step": "B1 taj challenges truth to EA SPORTS FC (invite-only)",
+        "tx": "https://testnet.nearblocks.io/txns/Tr1zkBDzUUw9JtHqhFD7eEfh9ytTy8mBjKuzp8dyZra"
+      },
+      {
+        "step": "B2 truth accepts",
+        "tx": "https://testnet.nearblocks.io/txns/EZHFjwFxwmsxVzXzLT9wzCrseyHHkjVUQgKHFpUugxcy"
+      },
+      {
+        "step": "B3 truth concedes, contract pays taj instantly",
+        "tx": "https://testnet.nearblocks.io/txns/GLUT2UdNi7Y4UfiiGBCNbB4ngoe5Xn7RcbVJxiXXgo92"
+      },
+      {
+        "step": "A3 DUEL referee reads Coinbase and pays the winner",
+        "tx": "https://testnet.nearblocks.io/txns/4x7L6k4VUxG2o2H5FqJX3GS3tgV3U5YgRk7a3Tu9vnSZ",
+        "verdict": {
+          "v": 1,
+          "duel": 0,
+          "referee": "duel-ai-referee",
+          "method": "price-oracle",
+          "result": "creator",
+          "winner": "taj.duel-b91d5de8.testnet",
+          "reason": "BTC was $75,494.11 at 2026-11-06T08:12:00.000Z (target $37,704, creator needed above)",
+          "data": {
+            "source": "coinbase:BTC-USD:1m-close",
+            "price": 75494.11,
+            "at": 1793952720000,
+            "target": 37704,
+            "dir": "above"
+          },
+          "inputs_sha256": "9c1f42d1488ae63c12e226c8bb642a6f254d96e23329427b904deaae672fc908",
+          "decided_at": "2026-11-06T08:15:21.264Z"
+        }
+      }
+    ]
+  }
+]

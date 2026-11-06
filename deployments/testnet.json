@@ -1,0 +1,10 @@
+{
+  "network": "testnet",
+  "contract": "duel-b91d5de8.testnet",
+  "referee": "referee.duel-b91d5de8.testnet",
+  "demo_players": [
+    "taj.duel-b91d5de8.testnet",
+    "truth.duel-b91d5de8.testnet"
+  ],
+  "deployed_at": "2026-11-06T08:09:47.133Z"
+}
