@@ -55,10 +55,17 @@ const initArgs = {
   grace_ms: 7 * 24 * 3600 * 1000,
 };
 if (!config || (config.version ?? 1) < 2) {
-  // fresh deploy -> new; v1 state -> migrate_v2 (fresh duel book, v1 test duels were all settled)
-  const methodName = config ? "migrate_v2" : "new";
-  await contract.callFunctionRaw({ contractId: names.contract, methodName, args: initArgs, gas: 100_000_000_000_000n });
-  console.log(`initialised with ${methodName}`);
+  // fresh account -> new. Old v1 state (unreadable by v2 code) -> migrate_v2,
+  // which starts a fresh duel book (all v1 test duels were settled).
+  const init = (methodName) => contract.callFunctionRaw({ contractId: names.contract, methodName, args: initArgs, gas: 100_000_000_000_000n });
+  try {
+    await init("new");
+    console.log("initialised with new");
+  } catch (e) {
+    if (!/already been initialized/.test(String(e.message))) throw e;
+    await init("migrate_v2");
+    console.log("upgraded with migrate_v2");
+  }
 }
 
 for (const [who, amount] of [["referee", 1n], ["alice", 2n], ["bob", 2n]]) {
