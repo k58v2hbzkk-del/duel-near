@@ -1,6 +1,6 @@
 # DUEL — bet your friends on anything
 
-**NEAR HACKATHON 2026 · Tracks: Games With Real Economies (`games`), Social Money (`social`), AI Security & Defense (`security`), Privacy & Private AI (`privacy`)**
+**NEAR HACKATHON 2026 · Tracks: Games With Real Economies (`games`), Social Money (`social`), AI Security & Defense (`security`)**
 
 Live app: https://k58v2hbzkk-del.github.io/duel-near/ (NEAR testnet) · Contract: `duel-b91d5de8.testnet`
 
@@ -155,6 +155,7 @@ Optional settings: `NEARAI_MODEL`, `NEARAI_VISION_MODEL` (used when evidence is 
 ## Honest limits
 
 - **NEAR Intents is mainnet-only** (HACKATHON.md Q-007). On testnet, the "stake from any chain" and "cash out" panels show live mainnet quotes. Real cross-chain cash-out from the app is enabled for USDC duels on mainnet.
+- The live testnet referee runs without a NEAR AI Cloud key for now, so disputed game or real-life duels with no witnesses wait for the 7-day refund instead of an AI verdict. Add `NEARAI_API_KEY` to turn the AI judge on; the offline demo (`npm run demo`) shows its signed receipts end to end.
 - The referee agent runs in GitHub Actions for this demo. The AI inference runs inside NEAR AI Cloud's TEE and is verifiable; the agent process that calls it is not yet in a TEE. Moving the agent itself into a TEE (Shade Agent-style, with its key never leaving the enclave) is the next step.
 - Football results come from TheSportsDB's free tier, so coverage depends on their data.
 - Witness keys live in the witness's browser storage. If they clear it, they can't vote; the other witnesses and the referee fallback still settle the duel.
