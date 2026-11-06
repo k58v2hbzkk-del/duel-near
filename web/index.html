@@ -5,23 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>DUEL — bet your friends on anything</title>
   <meta name="description" content="Challenge a friend. Both stakes are locked on NEAR, an AI referee settles it, and the winner is paid automatically. Stake from any chain." />
-  <meta name="theme-color" content="#FAFBFF" />
+  <meta name="theme-color" content="#f7f7f5" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤺</text></svg>" />
   <meta property="og:title" content="DUEL — bet your friends on anything" />
   <meta property="og:description" content="Both stakes locked on NEAR. AI referee settles it. Winner paid automatically." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./app.css" />
 </head>
 <body>
   <header class="top">
-    <a class="mark" href="#/">DUEL</a>
+    <a class="mark" href="#/"><span class="glyph" aria-hidden="true">🤺</span>DUEL</a>
     <span class="net" id="net"></span>
     <button class="btn ghost small" id="wallet">Connect wallet</button>
   </header>
   <main id="app" aria-live="polite"></main>
   <div class="toast" id="toast" role="status"></div>
-  <footer class="foot">
+  <footer class="foot" id="foot">
     <p>Stakes are held by the DUEL contract on NEAR, never by a person. Settled by the DUEL AI referee on NEAR AI Cloud, or by a friend you both choose. <a id="repo" href="https://github.com/k58v2hbzkk-del/duel-near">Source</a></p>
     <p class="sig">Built by Tajudeen (<a href="https://x.com/Tajudeen">@Tajudeen</a>)</p>
   </footer>

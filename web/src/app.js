@@ -10,7 +10,12 @@ let pollTimer = null;
 
 // ---------------------------------------------------------------- helpers
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const short = (a) => (!a ? "" : a.length > 24 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
+const short = (a) => {
+  if (!a) return "";
+  if (/^[0-9a-f]{64}$/.test(a) || a.length > 40) return `${a.slice(0, 6)}…${a.slice(-4)}`;
+  const parts = a.replace(/\.(testnet|near)$/, "").split(".");
+  return parts[0];
+};
 const when = (ms) => new Date(ms).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const isUsdc = (t) => t && /17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|usdc/i.test(t);
 function money(units, token) {
@@ -49,47 +54,94 @@ function ticket(d, { mini = false, href = true } = {}) {
   </${tag}>`;
 }
 
-const SAMPLE = {
-  id: 0, title: "BTC above $120k by Friday 6pm?", creator: "tajudeen.near", opponent: "truth.near",
-  creator_side: "BTC ≥ $120,000", opponent_side: "BTC < $120,000", stake: (5n * 10n ** 24n).toString(), token: null, status: "Locked",
+// ------------------------------------------------------------------ views
+const ART = {
+  pick: `<svg viewBox="0 0 120 120"><rect x="22" y="30" width="60" height="44" rx="8"/><rect x="38" y="46" width="60" height="44" rx="8"/><path d="M50 62h36M50 72h24"/><circle cx="34" cy="42" r="3"/></svg>`,
+  lock: `<svg viewBox="0 0 120 120"><path d="M30 52l30-15 30 15-30 15z"/><path d="M30 52v28l30 15 30-15V52"/><path d="M60 67v28"/><ellipse cx="44" cy="32" rx="10" ry="4"/><path d="M34 32v6c0 2 4.5 4 10 4s10-2 10-4v-6"/><ellipse cx="76" cy="30" rx="10" ry="4"/><path d="M66 30v6c0 2 4.5 4 10 4s10-2 10-4v-6"/></svg>`,
+  check: `<svg viewBox="0 0 120 120"><rect x="24" y="24" width="56" height="70" rx="6"/><path d="M34 40h36M34 50h28M34 60h32"/><circle cx="78" cy="76" r="16"/><path d="M90 88l12 12"/><path d="M71 76l5 5 9-10"/></svg>`,
+  pay: `<svg viewBox="0 0 120 120"><path d="M42 28h36v18a18 18 0 0 1-36 0z"/><path d="M42 34H30a12 12 0 0 0 12 16M78 34h12a12 12 0 0 1-12 16"/><path d="M60 64v14M46 92h28M50 92l4-14h12l4 14"/></svg>`,
 };
 
-// ------------------------------------------------------------------ views
 async function home() {
+  document.querySelector("main").classList.add("full");
+  $("#foot").classList.add("hide");
   app.innerHTML = `
-    <h1>Bet your friends on anything.</h1>
-    <p class="lede">Both stakes are locked on NEAR. An AI referee checks the result and pays the winner. Stake from any chain.</p>
-    <div id="hero">${ticket(SAMPLE, { href: false })}</div>
-    <div class="dock"><div class="inner"><a class="btn block" href="#/new">Start a duel</a></div></div>
-    <h2>How it works</h2>
-    <ol class="steps">
-      <li>Pick the bet and your stake: a price, a football match, a game, or anything in real life.</li>
-      <li>Send the link. Your friend locks the same stake, from NEAR or any chain through NEAR Intents.</li>
-      <li>The referee checks the result: market data, the official score, or a private AI judge reading your evidence. The winner is paid in seconds.</li>
-    </ol>
-    <section id="mine"></section>
-    <section id="latest"></section>`;
+    <section class="hero">
+      <div class="glass" aria-hidden="true">
+        <div class="gq">BTC above $120k by Friday?</div>
+        <div class="gs"><div class="p a">Tajudeen<b>Yes</b></div><span class="x">🤺</span><div class="p b">Truth<b>No</b></div></div>
+        <div class="gp"><span>Both stakes locked</span><b>10 USDC</b></div>
+      </div>
+      <h1>Bet your friends<br>on anything.</h1>
+      <p class="lede">You both lock the same amount. The referee checks the result. The winner gets paid. Nobody can run away with the money.</p>
+      <a class="btn light" href="#/new">Start a duel</a>
+      <div class="chips"><span class="chip">📈 Prices</span><span class="chip">⚽ Football</span><span class="chip">🎮 Games</span><span class="chip">🏃 Real life</span></div>
+    </section>
+
+    <div class="wrap">
+      <h2>What people bet on.</h2>
+      <div class="rail">
+        <div class="use"><div class="pic price">📈</div><div class="body"><div class="tag">Price</div><div class="say">“BTC hits $120k by Friday.”</div><div class="how">Settled from live market prices at the exact minute.</div></div></div>
+        <div class="use"><div class="pic football">⚽</div><div class="body"><div class="tag">Football</div><div class="say">“Arsenal beat Chelsea.”</div><div class="how">Settled from the official full-time score.</div></div></div>
+        <div class="use"><div class="pic game">🎮</div><div class="body"><div class="tag">Games</div><div class="say">“I'll beat you on EA FC.”</div><div class="how">You both report the score. Disagree? The AI referee checks your screenshots.</div></div></div>
+        <div class="use"><div class="pic life">🏃</div><div class="body"><div class="tag">Real life</div><div class="say">“You won't run 10 km this week.”</div><div class="how">Pick a friend as judge, or let the AI referee decide from proof.</div></div></div>
+      </div>
+
+      <h2>How a duel works.</h2>
+      <div class="cards">
+        <div class="card"><div class="n">01</div><h3>Make the bet.</h3><p>Pick what you're betting on and how much.</p><div class="art">${ART.pick}</div></div>
+        <div class="card"><div class="n">02</div><h3>Your friend locks the same amount.</h3><p>Send the link. Once they accept, both stakes are locked until the result is in.</p><div class="art">${ART.lock}</div></div>
+        <div class="card"><div class="n">03</div><h3>The referee checks the result.</h3><p>Market data, the official score, or a private AI that reads your proof and signs its decision.</p><div class="art">${ART.check}</div></div>
+        <div class="card"><div class="n">04</div><h3>The winner is paid in seconds.</h3><p>Automatically, to the coin and chain they want. A draw refunds you both.</p><div class="art">${ART.pay}</div></div>
+      </div>
+
+      <h2>Fair by design.</h2>
+      <div class="cards">
+        <div class="card"><h3>Nobody holds the money.</h3><p>Stakes sit in a smart contract on NEAR, not with a person or with us.</p></div>
+        <div class="card"><h3>Admitting you lost settles it.</h3><p>If one of you says the other won, it pays out at once. If you both report the same result, same.</p></div>
+        <div class="card"><h3>Lying doesn't pay.</h3><p>If the AI referee isn't sure who won, both of you get refunded. A fake claim can never beat a draw.</p></div>
+        <div class="card"><h3>Never stuck.</h3><p>If no one settles within 7 days, anyone can refund both players.</p></div>
+      </div>
+
+      <h2>Bet with what you already hold.</h2>
+      <p class="lede" style="margin-bottom:18px">Stake from another chain and cash out to the one you want, through NEAR Intents.</p>
+      <div class="tiles">
+        <div class="tile"><span><b>SOL</b>Solana</span></div><div class="tile"><span><b>USDT</b>BNB Chain</span></div><div class="tile"><span><b>USDC</b>Base</span></div>
+        <div class="tile"><span><b>ETH</b>Ethereum</span></div><div class="tile"><span><b>USDT</b>Tron</span></div><div class="tile"><span><b>BTC</b>Bitcoin</span></div>
+      </div>
+
+      <section id="mine"></section>
+      <section id="latest"></section>
+    </div>
+
+    <section class="closing">
+      <h2>Your friend owes you a bet.</h2>
+      <a class="btn light" href="#/new">Start a duel</a>
+      <div class="fine">
+        <div>Stakes held by a NEAR smart contract.<br>Settled by the DUEL referee on NEAR AI Cloud.<a href="https://github.com/k58v2hbzkk-del/duel-near">Source code</a><a href="https://x.com/Tajudeen">Built by Tajudeen (@Tajudeen)</a></div>
+        <div class="mk">🤺 DUEL</div>
+      </div>
+    </section>`;
   if (!CONTRACT) return;
   try {
-    const latest = await view("get_latest", { limit: 10 });
-    if (latest[0]) $("#hero").innerHTML = ticket(latest.find((d) => d.status === "Locked") || latest[0]);
-    $("#latest").innerHTML = latest.length ? `<h2>Latest duels</h2><div class="list">${latest.map((d) => ticket(d, { mini: true })).join("")}</div>` : "";
+    const latest = await view("get_latest", { limit: 6 });
+    $("#latest").innerHTML = latest.length ? `<h2>Live duels.</h2><div class="list">${latest.map((d) => ticket(d, { mini: true })).join("")}</div>` : "";
     const me = accountId();
     if (me) {
       const mine = await view("get_player_duels", { account: me });
-      $("#mine").innerHTML = `<h2>Your duels</h2>${mine.length ? `<div class="list">${mine.map((d) => ticket(d, { mini: true })).join("")}</div>` : `<p class="muted">No duels yet. Start one and send the link to a friend.</p>`}`;
+      $("#mine").innerHTML = `<h2>Your duels.</h2>${mine.length ? `<div class="list">${mine.map((d) => ticket(d, { mini: true })).join("")}</div>` : `<p class="muted">No duels yet. Start one and send the link to a friend.</p>`}`;
     }
   } catch (e) {
-    $("#latest").innerHTML = `<p class="muted small">Could not load duels from ${esc(CONTRACT)}: ${esc(e.message)}</p>`;
+    $("#latest").innerHTML = `<p class="muted small">Couldn't load live duels right now.</p>`;
   }
 }
 
 // -------------------------------------------------------------- create flow
 const KINDS = [
-  { id: "price", name: "Price", hint: "BTC above $120k by Friday?" },
-  { id: "football", name: "Football", hint: "Arsenal beat Chelsea?" },
-  { id: "game", name: "Game", hint: "EA SPORTS FC, COD, PUBG" },
-  { id: "custom", name: "Real life", hint: "He runs 10 km by Sunday" },
+  { id: "price", e: "📈", name: "Price", hint: "BTC above $120k by Friday?" },
+  { id: "football", e: "⚽", name: "Football", hint: "Arsenal beat Chelsea?" },
+  { id: "game", e: "🎮", name: "Game", hint: "EA SPORTS FC, COD, PUBG" },
+  { id: "custom", e: "🏃", name: "Real life", hint: "He runs 10 km by Sunday" },
 ];
 const ASSETS = ["BTC", "ETH", "SOL", "NEAR", "BNB", "XRP", "DOGE", "TON", "SUI", "HYPE"];
 const GAMES = ["EA SPORTS FC 26", "Call of Duty: Mobile", "PUBG Mobile", "eFootball", "Fortnite", "Chess", "Other game"];
@@ -103,9 +155,9 @@ function createView() {
   const s = { kind: "price", dir: "above", pick: "home", event: null };
   const tomorrow = Math.ceil((Date.now() + 86_400_000) / 3_600_000) * 3_600_000;
   app.innerHTML = `
-    <h1 style="font-size:44px">New duel</h1>
+    <h1 class="page-title">New duel</h1>
     <p class="lede">What are you betting on?</p>
-    <div class="kinds" role="group" aria-label="Bet type">${KINDS.map((k) => `<button class="kind" data-k="${k.id}" aria-pressed="${k.id === s.kind}"><b>${k.name}</b><span>${k.hint}</span></button>`).join("")}</div>
+    <div class="kinds" role="group" aria-label="Bet type">${KINDS.map((k) => `<button class="kind" data-k="${k.id}" aria-pressed="${k.id === s.kind}"><span class="e" aria-hidden="true">${k.e}</span><b>${k.name}</b><span>${k.hint}</span></button>`).join("")}</div>
     <form id="f" novalidate>
       <div id="fields"></div>
       <label for="stake">Your stake <span class="muted">(NEAR)</span></label>
@@ -487,6 +539,8 @@ function wireDuel(d, me) {
 // ---------------------------------------------------------------- routing
 function route() {
   clearInterval(pollTimer);
+  document.querySelector("main").classList.remove("full");
+  $("#foot").classList.remove("hide");
   window.scrollTo(0, 0);
   const h = location.hash || "#/";
   const m = h.match(/^#\/d\/(\d+)(\?new=1)?/);
