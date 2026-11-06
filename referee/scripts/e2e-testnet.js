@@ -56,6 +56,39 @@ step("B3 truth concedes, contract pays taj instantly", r);
 const g = await view(cfg.rpcUrl, names.contract, "get_duel", { duel_id: gameId });
 if (g.status !== "Settled" || g.winner !== names.alice) throw new Error(`game duel not settled: ${g.status}`);
 
+// C. game duel with three group-chat witnesses who vote from links (no wallet, no gas)
+const witnessKeys = ["w1", "w2", "w3"].map((l) => deriveKey(`${seed}:${Date.now()}`, l));
+r = await taj.callFunctionRaw({
+  contractId: names.contract, methodName: "create_duel", deposit: STAKE, gas: 100_000_000_000_000n,
+  args: { args: { title: "EA SPORTS FC 26: rematch, group chat decides", creator_side: "I win", opponent_side: "I win", kind: "game", params: JSON.stringify({ game: "EA SPORTS FC 26" }), resolve_at_ms: resolveAt, join_window_mins: 2, invited: names.bob } },
+});
+step("C1 taj starts a rematch with witnesses", r);
+const wId = ret(r);
+r = await truth.callFunctionRaw({ contractId: names.contract, methodName: "join_duel", args: { duel_id: wId }, deposit: STAKE, gas: 50_000_000_000_000n });
+step("C2 truth accepts", r);
+const W_FEE = 50_000_000_000_000_000_000_000n;
+const adders = [taj, taj, truth];
+for (const [i, w] of witnessKeys.entries()) {
+  r = await adders[i].callFunctionRaw({ contractId: names.contract, methodName: "add_witness", args: { duel_id: wId, name: ["Ada", "Bayo", "Chi"][i], public_key: w.publicKey }, deposit: W_FEE, gas: 50_000_000_000_000n });
+  step(`C3.${i + 1} ${i < 2 ? "taj" : "truth"} adds witness ${["Ada", "Bayo", "Chi"][i]}`, r);
+}
+for (const [i, approver] of [[0, truth], [1, truth], [2, taj]]) {
+  r = await approver.callFunctionRaw({ contractId: names.contract, methodName: "approve_witness", args: { duel_id: wId, index: i }, gas: 50_000_000_000_000n });
+  step(`C4.${i + 1} the other player approves ${["Ada", "Bayo", "Chi"][i]} (vote-only key added)`, r);
+}
+r = await taj.callFunctionRaw({ contractId: names.contract, methodName: "submit_claim", args: { duel_id: wId, winner: names.alice, evidence: null }, gas: 100_000_000_000_000n });
+step("C5 taj says he won", r);
+r = await truth.callFunctionRaw({ contractId: names.contract, methodName: "submit_claim", args: { duel_id: wId, winner: names.bob, evidence: null }, gas: 100_000_000_000_000n });
+step("C6 truth says he won: dispute, witnesses can vote", r);
+for (const i of [0, 2]) {
+  // the witness signs with its vote-only key ON the DUEL contract account
+  const witness = new Account(names.contract, cfg.rpcUrl, witnessKeys[i].secretKey);
+  r = await witness.callFunctionRaw({ contractId: names.contract, methodName: "witness_vote", args: { duel_id: wId, winner: names.bob }, gas: 100_000_000_000_000n });
+  step(`C7.${i === 0 ? 1 : 2} witness ${["Ada", "Bayo", "Chi"][i]} votes from a link (no wallet, no gas)`, r);
+}
+const wd = await view(cfg.rpcUrl, names.contract, "get_duel", { duel_id: wId });
+if (wd.status !== "Settled" || wd.winner !== names.bob) throw new Error(`witness duel not settled by majority: ${wd.status}`);
+
 // A3: wait for the resolve time, then the referee settles
 const wait = resolveAt + 2.5 * 60_000 - Date.now();
 console.log(`waiting ${Math.ceil(wait / 1000)}s for the BTC candle…`);

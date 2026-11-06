@@ -16,12 +16,22 @@
 //!   refund to both players. Funds can never be stuck.
 //! * Payouts that fail (e.g. unregistered token account) are kept as
 //!   "owed" balances that the owner can withdraw later.
+//!
+//! Group-chat witnesses (v2):
+//! * Either player can add a witness (a friend from the group chat) by their
+//!   witness key. The OTHER player must approve it, so nobody can secretly
+//!   be their own witness.
+//! * On approval the contract adds a function-call access key to ITSELF that
+//!   can only call `witness_vote`, with a small gas allowance. The witness
+//!   votes from a link: no wallet, no NEAR, no gas.
+//! * A majority of approved witnesses settles the duel. Keys are deleted
+//!   when the duel ends.
 
 use near_sdk::json_types::U128;
 use near_sdk::store::{IterableSet, LookupMap};
 use near_sdk::{
-    env, ext_contract, near, require, serde_json, AccountId, BorshStorageKey, Gas, NearToken,
-    PanicOnDefault, Promise, PromiseOrValue,
+    env, ext_contract, near, require, serde_json, AccountId, Allowance, BorshStorageKey, Gas,
+    NearToken, PanicOnDefault, Promise, PromiseOrValue, PublicKey,
 };
 
 pub const MAX_TITLE: usize = 140;
@@ -29,6 +39,11 @@ pub const MAX_SIDE: usize = 100;
 pub const MAX_PARAMS: usize = 1024;
 pub const MAX_VERDICT: usize = 4096;
 pub const MAX_EVIDENCE: usize = 500;
+pub const MAX_WITNESSES: usize = 5;
+pub const MAX_NAME: usize = 32;
+/// Paid by whoever adds a witness; funds the witness key's gas allowance.
+pub const WITNESS_FEE: u128 = 50_000_000_000_000_000_000_000; // 0.05 NEAR
+pub const VERSION: u32 = 2;
 pub const MAX_FEE_BPS: u16 = 1000; // 10%
 pub const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 pub const MAX_HORIZON_MS: u64 = 120 * DAY_MS;
@@ -50,6 +65,10 @@ enum StorageKey {
     Owed,
     Tokens,
     Players,
+    DuelsV2,
+    LockedV2,
+    PlayersV2,
+    WitnessKeys,
 }
 
 #[near(serializers = [json, borsh])]
@@ -77,6 +96,18 @@ pub struct Claim {
     pub winner: Option<AccountId>,
     /// Optional proof: a link to a screenshot / clip, or a short note.
     pub evidence: Option<String>,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Witness {
+    pub name: String,
+    pub key: PublicKey,
+    pub added_by: AccountId,
+    pub approved: bool,
+    pub voted: bool,
+    /// Who the witness says won. `None` = draw (only meaningful if `voted`).
+    pub vote: Option<AccountId>,
 }
 
 #[near(serializers = [json, borsh])]
@@ -111,11 +142,19 @@ pub struct Duel {
     /// Where each player wants winnings sent (e.g. a NEAR Intents deposit
     /// address that forwards to another chain). Defaults to the player.
     pub payout_to: Vec<(AccountId, AccountId)>,
+    /// Friends from the group chat who can settle a dispute by majority.
+    pub witnesses: Vec<Witness>,
 }
 
 impl Duel {
     pub fn is_player(&self, a: &AccountId) -> bool {
         &self.creator == a || self.opponent.as_ref() == Some(a)
+    }
+    pub fn approved_witnesses(&self) -> usize {
+        self.witnesses.iter().filter(|w| w.approved).count()
+    }
+    fn claims_conflict(&self) -> bool {
+        self.claims.len() == 2 && self.claims[0].winner != self.claims[1].winner
     }
     fn payout_account(&self, player: &AccountId) -> AccountId {
         self.payout_to
@@ -163,7 +202,9 @@ pub struct Config {
     pub fee_bps: u16,
     pub min_stake_near: U128,
     pub grace_ms: u64,
+    pub witness_window_ms: u64,
     pub duel_count: u64,
+    pub version: u32,
 }
 
 #[near(contract_state)]
@@ -175,6 +216,7 @@ pub struct Contract {
     fee_bps: u16,
     min_stake_near: u128,
     grace_ms: u64,
+    witness_window_ms: u64,
     next_id: u64,
     duels: LookupMap<u64, Duel>,
     locked: IterableSet<u64>,
@@ -183,6 +225,8 @@ pub struct Contract {
     /// Allowed NEP-141 tokens -> minimum stake.
     tokens: LookupMap<AccountId, u128>,
     players: LookupMap<AccountId, Vec<u64>>,
+    /// witness public key -> duel id (a key belongs to exactly one duel)
+    witness_keys: LookupMap<PublicKey, u64>,
 }
 
 fn owed_key(account: &AccountId, token: &Option<AccountId>) -> String {
@@ -219,13 +263,30 @@ impl Contract {
             fee_bps,
             min_stake_near: min_stake_near.0,
             grace_ms: grace_ms.unwrap_or(7 * DAY_MS),
+            witness_window_ms: DAY_MS,
             next_id: 0,
-            duels: LookupMap::new(StorageKey::Duels),
-            locked: IterableSet::new(StorageKey::Locked),
+            duels: LookupMap::new(StorageKey::DuelsV2),
+            locked: IterableSet::new(StorageKey::LockedV2),
             owed: LookupMap::new(StorageKey::Owed),
             tokens: LookupMap::new(StorageKey::Tokens),
-            players: LookupMap::new(StorageKey::Players),
+            players: LookupMap::new(StorageKey::PlayersV2),
+            witness_keys: LookupMap::new(StorageKey::WitnessKeys),
         }
+    }
+
+    /// v1 -> v2 upgrade on testnet: start a fresh duel book (v1 test duels
+    /// were all settled). Only the contract account itself can call this.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate_v2(
+        owner: AccountId,
+        referee: AccountId,
+        treasury: AccountId,
+        fee_bps: u16,
+        min_stake_near: U128,
+        grace_ms: Option<u64>,
+    ) -> Self {
+        Self::new(owner, referee, treasury, fee_bps, min_stake_near, grace_ms)
     }
 
     // ---------------------------------------------------------------- create
@@ -324,6 +385,7 @@ impl Contract {
             winner: None,
             verdict: None,
             payout_to: vec![],
+            witnesses: vec![],
         };
         event("duel_created", serde_json::json!({"id": id, "creator": creator, "stake": U128(stake)}));
         self.duels.insert(id, duel);
@@ -364,6 +426,7 @@ impl Contract {
             "only the creator can cancel now"
         );
         d.status = Status::Cancelled;
+        self.cleanup_witness_keys(&d);
         let to = d.payout_account(&d.creator.clone());
         let (token, stake) = (d.token.clone(), d.stake.0);
         let owner = d.creator.clone();
@@ -423,6 +486,128 @@ impl Contract {
         None
     }
 
+    // ------------------------------------------------------------- witnesses
+
+    /// Add a friend from the group chat as a witness. Attach exactly 0.05
+    /// NEAR (it pays for their votes, so they never need NEAR or a wallet).
+    /// The other player must approve the witness before it counts.
+    #[payable]
+    pub fn add_witness(&mut self, duel_id: u64, name: String, public_key: PublicKey) {
+        let mut d = self.get(duel_id);
+        let caller = env::predecessor_account_id();
+        require!(d.is_player(&caller), "not a player");
+        require!(matches!(d.status, Status::Open | Status::Locked), "duel finished");
+        require!(d.judge.is_none(), "this duel has a friend judge");
+        require!(env::attached_deposit().as_yoctonear() == WITNESS_FEE, "attach exactly 0.05 NEAR");
+        require!(!name.trim().is_empty() && name.len() <= MAX_NAME, "bad witness name");
+        require!(d.witnesses.len() < MAX_WITNESSES, "too many witnesses");
+        require!(d.witnesses.iter().all(|w| !w.voted), "voting already started");
+        require!(!self.witness_keys.contains_key(&public_key), "this witness key is already in use");
+        require!(d.witnesses.iter().all(|w| w.key != public_key), "duplicate witness");
+        self.witness_keys.insert(public_key.clone(), duel_id);
+        event("witness_added", serde_json::json!({"id": duel_id, "name": name, "by": caller}));
+        d.witnesses.push(Witness { name, key: public_key, added_by: caller, approved: false, voted: false, vote: None });
+        self.duels.insert(duel_id, d);
+    }
+
+    /// The OTHER player approves a witness (after checking the witness code
+    /// the friend posted in the group chat). This activates their vote key.
+    pub fn approve_witness(&mut self, duel_id: u64, index: u32) -> Promise {
+        let mut d = self.get(duel_id);
+        let caller = env::predecessor_account_id();
+        let i = index as usize;
+        require!(i < d.witnesses.len(), "no such witness");
+        require!(d.status == Status::Open || d.status == Status::Locked, "duel finished");
+        require!(d.is_player(&caller), "not a player");
+        require!(d.witnesses[i].added_by != caller, "the other player must approve");
+        require!(!d.witnesses[i].approved, "already approved");
+        d.witnesses[i].approved = true;
+        let key = d.witnesses[i].key.clone();
+        event("witness_approved", serde_json::json!({"id": duel_id, "name": d.witnesses[i].name}));
+        self.duels.insert(duel_id, d);
+        let me = env::current_account_id();
+        Promise::new(me.clone()).add_access_key_allowance(
+            key,
+            Allowance::limited(NearToken::from_yoctonear(WITNESS_FEE)).unwrap(),
+            me,
+            "witness_vote",
+        )
+    }
+
+    /// Either player can remove a witness that hasn't been approved yet (e.g.
+    /// the witness code didn't match). The fee goes back to whoever added it.
+    pub fn reject_witness(&mut self, duel_id: u64, index: u32) -> Promise {
+        let mut d = self.get(duel_id);
+        let caller = env::predecessor_account_id();
+        let i = index as usize;
+        require!(i < d.witnesses.len(), "no such witness");
+        require!(d.is_player(&caller), "not a player");
+        require!(!d.witnesses[i].approved, "already approved");
+        let w = d.witnesses.remove(i);
+        self.witness_keys.remove(&w.key);
+        self.duels.insert(duel_id, d);
+        Promise::new(w.added_by).transfer(NearToken::from_yoctonear(WITNESS_FEE))
+    }
+
+    /// Called by a witness from their link. The transaction is signed with
+    /// the witness's function-call key on THIS contract account, so the
+    /// witness needs no account, no wallet and no gas.
+    pub fn witness_vote(&mut self, duel_id: u64, winner: Option<AccountId>) -> Option<Promise> {
+        let me = env::current_account_id();
+        require!(env::predecessor_account_id() == me, "witnesses vote with their witness key");
+        let pk = env::signer_account_pk();
+        require!(self.witness_keys.get(&pk) == Some(&duel_id), "not a witness of this duel");
+        let mut d = self.get(duel_id);
+        require!(d.status == Status::Locked, "duel not locked");
+        require!(
+            env::block_timestamp_ms() >= d.resolve_at_ms || d.claims_conflict(),
+            "voting opens at the resolve time"
+        );
+        if let Some(w) = &winner {
+            require!(d.is_player(w), "winner must be a player");
+        }
+        let i = d.witnesses.iter().position(|w| w.key == pk).unwrap_or_else(|| env::panic_str("not a witness"));
+        require!(d.witnesses[i].approved, "witness not approved");
+        require!(!d.witnesses[i].voted, "already voted");
+        d.witnesses[i].voted = true;
+        d.witnesses[i].vote = winner.clone();
+        event("witness_vote", serde_json::json!({"id": duel_id, "name": d.witnesses[i].name, "winner": winner}));
+
+        let n = d.approved_witnesses();
+        let same = d.witnesses.iter().filter(|w| w.approved && w.voted && w.vote == winner).count();
+        if same * 2 > n {
+            let votes: Vec<_> = d
+                .witnesses
+                .iter()
+                .filter(|w| w.approved)
+                .map(|w| serde_json::json!({"name": w.name, "voted": w.voted, "winner": w.vote}))
+                .collect();
+            let verdict = serde_json::json!({
+                "settled_by": "witnesses",
+                "method": "group-chat majority",
+                "winner": winner,
+                "votes": votes,
+            })
+            .to_string();
+            return Some(self.settle(d, winner, verdict));
+        }
+        self.duels.insert(duel_id, d);
+        None
+    }
+
+    fn cleanup_witness_keys(&mut self, d: &Duel) {
+        let me = env::current_account_id();
+        for w in &d.witnesses {
+            self.witness_keys.remove(&w.key);
+            if w.approved {
+                Promise::new(me.clone()).delete_key(w.key.clone()).detach();
+            } else {
+                // never activated: give the fee back
+                Promise::new(w.added_by.clone()).transfer(NearToken::from_yoctonear(WITNESS_FEE)).detach();
+            }
+        }
+    }
+
     // ----------------------------------------------------------------- judge
 
     /// Settle a duel. Callable by the chosen judge, or the DUEL referee when
@@ -434,6 +619,12 @@ impl Contract {
         require!(caller == judge, "only the judge can settle this duel");
         require!(d.status == Status::Locked, "duel not locked");
         require!(env::block_timestamp_ms() >= d.resolve_at_ms, "too early to settle");
+        if d.approved_witnesses() > 0 {
+            require!(
+                env::block_timestamp_ms() >= d.resolve_at_ms + self.witness_window_ms,
+                "witnesses are still voting"
+            );
+        }
         require!(verdict.len() <= MAX_VERDICT, "verdict too long");
         if let Some(w) = &winner {
             require!(d.is_player(w), "winner must be a player");
@@ -452,6 +643,7 @@ impl Contract {
         );
         d.status = Status::Refunded;
         self.locked.remove(&duel_id);
+        self.cleanup_witness_keys(&d);
         let a = d.creator.clone();
         let b = d.opponent.clone().unwrap();
         let (to_a, to_b) = (d.payout_account(&a), d.payout_account(&b));
@@ -465,6 +657,7 @@ impl Contract {
     fn settle(&mut self, mut d: Duel, winner: Option<AccountId>, verdict: String) -> Promise {
         let id = d.id;
         self.locked.remove(&id);
+        self.cleanup_witness_keys(&d);
         let (token, stake) = (d.token.clone(), d.stake.0);
         d.verdict = Some(verdict);
         d.winner = winner.clone();
@@ -549,6 +742,11 @@ impl Contract {
         self.fee_bps = fee_bps;
     }
 
+    pub fn set_witness_window(&mut self, ms: u64) {
+        self.assert_owner();
+        self.witness_window_ms = ms;
+    }
+
     pub fn set_min_stake_near(&mut self, min: U128) {
         self.assert_owner();
         self.min_stake_near = min.0;
@@ -591,7 +789,11 @@ impl Contract {
         self.locked
             .iter()
             .filter_map(|i| self.duels.get(i))
-            .filter(|d| d.judge.is_none() && now >= d.resolve_at_ms)
+            .filter(|d| {
+                d.judge.is_none()
+                    && now >= d.resolve_at_ms
+                    && (d.approved_witnesses() == 0 || now >= d.resolve_at_ms + self.witness_window_ms)
+            })
             .take(limit)
             .cloned()
             .collect()
@@ -616,7 +818,9 @@ impl Contract {
             fee_bps: self.fee_bps,
             min_stake_near: U128(self.min_stake_near),
             grace_ms: self.grace_ms,
+            witness_window_ms: self.witness_window_ms,
             duel_count: self.next_id,
+            version: VERSION,
         }
     }
 

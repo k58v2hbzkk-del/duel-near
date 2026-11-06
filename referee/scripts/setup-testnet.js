@@ -40,27 +40,25 @@ if (!(await exists(names.contract))) throw new Error(`${names.contract} does not
 console.log(`deploying ${wasmPath} to ${names.contract}`);
 await contract.deployContract(new Uint8Array(readFileSync(wasmPath)));
 
-let initialised = true;
+let config = null;
 try {
-  await provider.callFunction({ contractId: names.contract, method: "get_config", args: {} });
+  config = await provider.callFunction({ contractId: names.contract, method: "get_config", args: {} });
 } catch {
-  initialised = false;
+  config = null;
 }
-if (!initialised) {
-  await contract.callFunctionRaw({
-    contractId: names.contract,
-    methodName: "new",
-    args: {
-      owner: names.contract,
-      referee: names.referee,
-      treasury: names.contract,
-      fee_bps: 200,
-      min_stake_near: (NEAR / 10n).toString(),
-      grace_ms: 7 * 24 * 3600 * 1000,
-    },
-    gas: 100_000_000_000_000n,
-  });
-  console.log("initialised");
+const initArgs = {
+  owner: names.contract,
+  referee: names.referee,
+  treasury: names.contract,
+  fee_bps: 200,
+  min_stake_near: (NEAR / 10n).toString(),
+  grace_ms: 7 * 24 * 3600 * 1000,
+};
+if (!config || (config.version ?? 1) < 2) {
+  // fresh deploy -> new; v1 state -> migrate_v2 (fresh duel book, v1 test duels were all settled)
+  const methodName = config ? "migrate_v2" : "new";
+  await contract.callFunctionRaw({ contractId: names.contract, methodName, args: initArgs, gas: 100_000_000_000_000n });
+  console.log(`initialised with ${methodName}`);
 }
 
 for (const [who, amount] of [["referee", 1n], ["alice", 2n], ["bob", 2n]]) {
@@ -70,6 +68,6 @@ for (const [who, amount] of [["referee", 1n], ["alice", 2n], ["bob", 2n]]) {
 }
 
 mkdirSync("../deployments", { recursive: true });
-const out = { network: "testnet", contract: names.contract, referee: names.referee, demo_players: [names.alice, names.bob], deployed_at: new Date().toISOString() };
+const out = { network: "testnet", contract: names.contract, referee: names.referee, demo_players: [names.alice, names.bob], version: 2, deployed_at: new Date().toISOString() };
 writeFileSync("../deployments/testnet.json", JSON.stringify(out, null, 2) + "\n");
 console.log(JSON.stringify(out, null, 2));

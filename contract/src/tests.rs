@@ -475,3 +475,231 @@ fn evidence_is_bounded() {
     ctx(&taj(), 0, T0_MS + 5000);
     c.submit_claim(id, Some(taj()), Some("x".repeat(501)));
 }
+
+// ---------------------------------------------------------------- witnesses
+
+fn pk(i: usize) -> PublicKey {
+    [
+        "ed25519:HAz8tUMQ1mfSD9YSpUoiyKuG4cGRjjwXPLgMC4BJfVRd",
+        "ed25519:G1WxtuyqXnA3PZJGSdmc7mBoAXtwXf9sfo2Vxxz1yhsr",
+        "ed25519:CfH6m7wsakSAJNjxs681k2XVPWezdP2zYG5UhiNe4jAh",
+        "ed25519:DHfAQBfWGQ2gv2pxMEo7ajED1CfSvFWF9wV7VEySZYGh",
+    ][i]
+    .parse()
+    .unwrap()
+}
+
+/// Called as a witness: predecessor = contract itself, signed with `key`.
+fn as_witness(key: PublicKey, now_ms: u64) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(owner())
+        .predecessor_account_id(owner())
+        .signer_account_id(owner())
+        .signer_account_pk(key)
+        .block_timestamp(now_ms * 1_000_000)
+        .account_balance(NearToken::from_near(100));
+    testing_env!(b.build());
+}
+
+/// Locked duel with 3 approved witnesses (taj adds 2, truth adds 1).
+fn duel_with_witnesses(c: &mut Contract) -> u64 {
+    let id = locked_duel(c);
+    for (i, who) in [(0, taj()), (1, taj()), (2, truth())] {
+        ctx(&who, WITNESS_FEE, T0_MS + 10);
+        c.add_witness(id, format!("friend{i}"), pk(i));
+    }
+    ctx(&truth(), 0, T0_MS + 20);
+    c.approve_witness(id, 0);
+    c.approve_witness(id, 1);
+    ctx(&taj(), 0, T0_MS + 20);
+    c.approve_witness(id, 2);
+    id
+}
+
+#[test]
+fn approving_a_witness_adds_a_vote_only_key() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+    ctx(&truth(), 0, T0_MS + 20);
+    c.approve_witness(id, 0);
+    let added = get_created_receipts().into_iter().flat_map(|r| r.actions).any(|a| matches!(
+        a,
+        MockAction::AddKeyWithFunctionCall { ref method_names, ref allowance, .. } if method_names.iter().any(|f| f == "witness_vote") && allowance.is_some()
+    ));
+    assert!(added);
+    assert!(c.get_duel(id).unwrap().witnesses[0].approved);
+}
+
+#[test]
+#[should_panic(expected = "the other player must approve")]
+fn cannot_approve_your_own_witness() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+    c.approve_witness(id, 0);
+}
+
+#[test]
+#[should_panic(expected = "attach exactly 0.05 NEAR")]
+fn adding_a_witness_needs_the_fee() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&taj(), 0, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+}
+
+#[test]
+#[should_panic(expected = "not a player")]
+fn strangers_cannot_add_witnesses() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&acc("stranger.testnet"), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+}
+
+#[test]
+fn majority_of_witnesses_settles() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    as_witness(pk(0), T0_MS + DAY_MS);
+    assert!(c.witness_vote(id, Some(truth())).is_none()); // 1 of 3
+    as_witness(pk(2), T0_MS + DAY_MS + 1);
+    assert!(c.witness_vote(id, Some(truth())).is_some()); // 2 of 3 -> settled
+    let d = c.get_duel(id).unwrap();
+    assert_eq!(d.status, Status::Settled);
+    assert_eq!(d.winner, Some(truth()));
+    assert!(d.verdict.unwrap().contains("witnesses"));
+    let deleted = get_created_receipts().into_iter().flat_map(|r| r.actions).filter(|a| matches!(a, MockAction::DeleteKey { .. })).count();
+    assert_eq!(deleted, 3);
+}
+
+#[test]
+fn split_witnesses_do_not_settle() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    as_witness(pk(0), T0_MS + DAY_MS);
+    c.witness_vote(id, Some(truth()));
+    as_witness(pk(1), T0_MS + DAY_MS);
+    c.witness_vote(id, Some(taj()));
+    assert_eq!(c.get_duel(id).unwrap().status, Status::Locked);
+}
+
+#[test]
+#[should_panic(expected = "witnesses vote with their witness key")]
+fn players_cannot_call_witness_vote() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    ctx(&taj(), 0, T0_MS + DAY_MS);
+    c.witness_vote(id, Some(taj()));
+}
+
+#[test]
+#[should_panic(expected = "not a witness of this duel")]
+fn unknown_key_cannot_vote() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    as_witness(pk(3), T0_MS + DAY_MS);
+    c.witness_vote(id, Some(taj()));
+}
+
+#[test]
+#[should_panic(expected = "witness not approved")]
+fn unapproved_witness_cannot_vote() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+    as_witness(pk(0), T0_MS + DAY_MS);
+    c.witness_vote(id, Some(taj()));
+}
+
+#[test]
+#[should_panic(expected = "already voted")]
+fn witness_votes_once() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    as_witness(pk(0), T0_MS + DAY_MS);
+    c.witness_vote(id, Some(taj()));
+    c.witness_vote(id, Some(taj()));
+}
+
+#[test]
+#[should_panic(expected = "voting opens at the resolve time")]
+fn witnesses_wait_for_the_result() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    as_witness(pk(0), T0_MS + 100);
+    c.witness_vote(id, Some(taj()));
+}
+
+#[test]
+fn witnesses_can_vote_early_when_players_disagree() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    ctx(&taj(), 0, T0_MS + 100);
+    c.submit_claim(id, Some(taj()), None);
+    ctx(&truth(), 0, T0_MS + 100);
+    c.submit_claim(id, Some(truth()), None);
+    as_witness(pk(0), T0_MS + 200);
+    assert!(c.witness_vote(id, Some(taj())).is_none());
+}
+
+#[test]
+fn referee_waits_for_witnesses_then_can_step_in() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    ctx(&referee(), 0, T0_MS + DAY_MS + 10);
+    assert!(c.get_ready_for_referee(None).is_empty());
+    ctx(&referee(), 0, T0_MS + 2 * DAY_MS + 10);
+    assert_eq!(c.get_ready_for_referee(None).len(), 1);
+    c.resolve(id, None, "{}".into());
+    assert_eq!(c.get_duel(id).unwrap().status, Status::Draw);
+}
+
+#[test]
+#[should_panic(expected = "witnesses are still voting")]
+fn referee_cannot_overrule_witnesses_early() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    ctx(&referee(), 0, T0_MS + DAY_MS + 10);
+    c.resolve(id, Some(taj()), "{}".into());
+}
+
+#[test]
+fn rejecting_a_witness_refunds_the_fee() {
+    let mut c = setup();
+    let id = locked_duel(&mut c);
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(id, "Ada".into(), pk(0));
+    ctx(&truth(), 0, T0_MS + 20);
+    c.reject_witness(id, 0);
+    assert!(c.get_duel(id).unwrap().witnesses.is_empty());
+    assert!(transfers().contains(&(taj(), WITNESS_FEE)));
+}
+
+#[test]
+#[should_panic(expected = "this witness key is already in use")]
+fn witness_key_belongs_to_one_duel() {
+    let mut c = setup();
+    let a = locked_duel(&mut c);
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(a, "Ada".into(), pk(0));
+    ctx(&taj(), NEAR, T0_MS);
+    let b = c.create_duel(args("price", DAY_MS));
+    ctx(&taj(), WITNESS_FEE, T0_MS + 10);
+    c.add_witness(b, "Ada".into(), pk(0));
+}
+
+#[test]
+fn concession_still_settles_and_cleans_witness_keys() {
+    let mut c = setup();
+    let id = duel_with_witnesses(&mut c);
+    ctx(&taj(), 0, T0_MS + 100);
+    c.submit_claim(id, Some(truth()), None);
+    assert_eq!(c.get_duel(id).unwrap().status, Status::Settled);
+    let deleted = get_created_receipts().into_iter().flat_map(|r| r.actions).filter(|a| matches!(a, MockAction::DeleteKey { .. })).count();
+    assert_eq!(deleted, 3);
+}
