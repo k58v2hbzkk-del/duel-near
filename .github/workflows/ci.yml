@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    name: Contract tests + wasm build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+      - name: Unit tests (32)
+        run: cargo test
+      - name: Install cargo-near
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/latest/download/cargo-near-installer.sh | sh
+      - name: Build wasm
+        run: cargo near build non-reproducible-wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duel-contract-wasm
+          path: contract/target/near/duel_contract.wasm
+
+  referee:
+    name: Referee tests + offline demo
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: referee
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Unit tests (23)
+        run: npm test
+      - name: Offline demo (no keys, no network)
+        run: npm run demo
+      - name: Live NEAR Intents quote (mainnet, dry run)
+        continue-on-error: true
+        run: npm run quote -- cashout 10 USDT bsc
+
+  web:
+    name: Web app build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && (cd ../referee && npm ci)
+      - run: npm run build

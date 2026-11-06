@@ -1,0 +1,48 @@
+name: Web app (GitHub Pages)
+
+# Publishes web/ to GitHub Pages, pointed at the testnet contract in
+# deployments/testnet.json. Enable Pages once: Settings > Pages > Source:
+# "GitHub Actions".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Deploy to NEAR testnet"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency: pages
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: (cd referee && npm ci) && (cd web && npm ci)
+      - name: Build
+        working-directory: web
+        run: |
+          export DUEL_CONTRACT=$(node -p 'try{require("../deployments/testnet.json").contract}catch{""}')
+          npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.d.outputs.page_url }}
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4

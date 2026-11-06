@@ -1,0 +1,21 @@
+{
+  "name": "duel-referee",
+  "version": "1.0.0",
+  "description": "DUEL AI referee: settles price, football and game bets with verifiable NEAR AI Cloud verdicts",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "demo": "node src/demo.js",
+    "referee": "node src/run.js",
+    "referee:dry": "node src/run.js --dry",
+    "quote": "node src/quote.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.17.0",
+    "near-api-js": "^7.4.0"
+  },
+  "type": "module"
+}

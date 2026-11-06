@@ -1,0 +1,71 @@
+name: Deploy to NEAR testnet
+
+# Run from the Actions tab (works from the GitHub mobile site).
+# Needs one repository secret: DUEL_SEED (any long random text).
+# Optional secret: NEARAI_API_KEY (enables the AI judge for game bets).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: deploy-testnet
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DUEL_SEED: ${{ secrets.DUEL_SEED }}
+      NEARAI_API_KEY: ${{ secrets.NEARAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check secrets
+        run: |
+          if [ -z "$DUEL_SEED" ]; then echo "::error::Add a repository secret named DUEL_SEED (Settings > Secrets and variables > Actions)"; exit 1; fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+      - name: Build contract
+        working-directory: contract
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/cargo-near/releases/latest/download/cargo-near-installer.sh | sh
+          cargo near build non-reproducible-wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install referee
+        working-directory: referee
+        run: npm ci
+      - name: Derive accounts from DUEL_SEED
+        id: acc
+        working-directory: referee
+        run: |
+          node -e 'import("./src/keys.js").then(({deriveKey,accountsFor})=>{const s=process.env.DUEL_SEED;const a=accountsFor(s);console.log("contract="+a.contract);console.log("pubkey="+deriveKey(s,"contract").publicKey)})' >> "$GITHUB_OUTPUT"
+      - name: Create the contract account with the testnet faucet (first run only)
+        run: |
+          ID='${{ steps.acc.outputs.contract }}'
+          BODY="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"query\",\"params\":{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$ID\"}}"
+          if curl -s https://rpc.testnet.near.org -H 'content-type: application/json' -d "$BODY" | grep -q '"amount"'; then
+            echo "$ID already exists"
+          else
+            curl --proto '=https' --tlsv1.2 -LsSf https://github.com/near/near-cli-rs/releases/latest/download/near-cli-rs-installer.sh | sh
+            near account create-account sponsor-by-faucet-service "$ID" use-manually-provided-public-key '${{ steps.acc.outputs.pubkey }}' network-config testnet create
+            sleep 8
+          fi
+      - name: Deploy + init + create referee and demo players
+        working-directory: referee
+        run: node scripts/setup-testnet.js ../contract/target/near/duel_contract.wasm
+      - name: Live end-to-end test on testnet
+        working-directory: referee
+        run: node scripts/e2e-testnet.js
+      - name: Save the deployment record
+        if: always()
+        run: |
+          git config user.name "duel-bot"
+          git config user.email "duel-bot@users.noreply.github.com"
+          git add deployments
+          git commit -m "testnet deployment $(date -u +%FT%TZ)" || echo "nothing to commit"
+          git push || echo "push skipped"
