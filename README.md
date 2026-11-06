@@ -138,7 +138,7 @@ Optional settings: `NEARAI_MODEL`, `NEARAI_VISION_MODEL` (used when evidence is 
 
 ## Disclosure (HACKATHON.md Q-001 to Q-005)
 
-- **Origin of the idea:** DUEL started as a plugin for the MoonPay PayBox hackathon (Oct 2026, Solana). **None of that code is in this repo.** Everything here (contract, referee, Intents and NEAR AI integration, web app) was written from scratch for NEAR HACKATHON, starting 6 Nov 2026. Baseline tag: `pre-hackathon` (empty). Submission tag: `hackathon-submission`.
+- **Origin of the idea:** DUEL started as a plugin for the MoonPay PayBox hackathon (Oct 2026, Solana). **None of that code is in this repo.** Everything here (contract, referee, Intents and NEAR AI integration, web app) was written from scratch for NEAR HACKATHON, starting 6 Nov 2026. The first commit, `498ab50`, is an empty baseline. Every file was added after it, during the hackathon window ([full diff](https://github.com/k58v2hbzkk-del/duel-near/compare/498ab50...main)).
 - **AI-generated code:** most of the code was written with Claude (Anthropic) under Tajudeen's direction, from a phone.
 - **Libraries:** near-sdk (Rust), near-api-js, @near-wallet-selector/*, @near-js/transactions, ethers (signature recovery and base58 only), esbuild. Data sources: Coinbase Exchange API, CoinGecko, TheSportsDB, NEAR AI Cloud, NEAR Intents 1Click API.
 
